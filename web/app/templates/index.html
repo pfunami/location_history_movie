@@ -16,17 +16,14 @@
   {% if error %}<div class="error">{{ error }}</div>{% endif %}
 
   <div class="card">
-    <h3>Queue Status</h3>
-    <div class="status-line">
-      <div class="stat"><div class="num" id="q-n">{{ n_queued }}</div>
-        <div class="label">実行中 + 待機ジョブ</div></div>
-      <div class="stat"><div class="num" id="q-wait">{{ "%.0f"|format(wait_min) }}<span style="font-size:14px"> 分</span></div>
-        <div class="label">今投入した場合の推定待ち時間</div></div>
-      <div class="stat"><div class="num">{{ model.samples }}</div>
-        <div class="label">推定モデルの学習サンプル数</div></div>
-    </div>
-    <p class="hint">推定時間は過去のジョブ実績（フレーム数・位置情報数と実際の所要時間）から
-      オンラインで学習して更新されます。</p>
+    <h3>Sample</h3>
+    <p style="font-size:14.5px;margin:0 0 12px">
+      スマホの Google マップからエクスポートしたロケーション履歴 JSON をアップロードすると、
+      ダークな地図の上を発光するトレイルが移動するムービーを生成します。
+      期間や早送りの度合いは自由に指定でき、カメラは移動範囲に合わせて自動でズームします。
+      下は離島旅行の 2 日間を 10 秒にしたサンプルです。</p>
+    <video src="{{ prefix }}/static/sample.mp4" controls muted loop playsinline
+           style="width:100%;border-radius:6px;border:1px solid var(--border);display:block"></video>
   </div>
 
   <form class="card" action="{{ prefix }}/submit" method="post"
@@ -97,6 +94,18 @@
       そのリンクから進捗確認とダウンロードができます（保存期間 7 日）。
       アップロードされた位置情報はムービー生成のみに使用し、7 日後に削除されます。</p>
   </form>
+
+  <div class="card">
+    <h3>Queue Status</h3>
+    <div class="status-line">
+      <div class="stat"><div class="num" id="q-n">{{ n_queued }}</div>
+        <div class="label">実行中 + 待機ジョブ</div></div>
+      <div class="stat"><div class="num" id="q-wait">{{ "%.0f"|format(wait_min) }}<span style="font-size:14px"> 分</span></div>
+        <div class="label">今投入した場合の推定待ち時間</div></div>
+    </div>
+    <p class="hint">推定時間は過去のジョブ実績（フレーム数・位置情報数と実際の所要時間）から
+      オンラインで学習して更新されます。</p>
+  </div>
 
   <footer>
     地図タイル: © OpenStreetMap contributors, © CARTO ／

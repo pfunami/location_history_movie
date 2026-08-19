@@ -5,6 +5,7 @@ location-history.json
 
 # outputs / caches
 *.mp4
+!web/app/static/sample.mp4
 tile_cache/
 .venv/
 __pycache__/
