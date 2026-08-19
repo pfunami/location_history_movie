@@ -32,8 +32,18 @@
         enctype="multipart/form-data" id="f">
     <h3>Create a Movie</h3>
 
+    <div class="howto">
+      <p class="howto-title">📱 ロケーション履歴 JSON の取得方法</p>
+      <ol>
+        <li>スマホの <b>Google マップ</b> を開く</li>
+        <li>プロフィールアイコン → <b>設定</b></li>
+        <li><b>タイムライン</b> → <b>タイムラインのエクスポート</b></li>
+        <li>書き出された <code>location-history.json</code> を下で選択</li>
+      </ol>
+    </div>
+
     <div class="row"><div class="field">
-      <label>ロケーション履歴 JSON（スマホの Google マップ → 設定 → タイムラインのエクスポート）</label>
+      <label>ロケーション履歴 JSON</label>
       <input type="file" name="file" accept=".json,application/json" required>
     </div></div>
 
@@ -92,10 +102,21 @@
       </div>
     </details>
 
-    <p><button class="primary" id="go">ムービー作成を開始</button></p>
+    <div class="consent">
+      <label>
+        <input type="checkbox" name="consent" value="yes" required id="consent">
+        <span><b>位置情報データの取り扱いに同意します。</b><br>
+        アップロードされたロケーション履歴はムービー生成のみに使用され、
+        サーバー上に平文で一時保存された後、<b>7 日後に自動削除</b>されます。
+        生成されたムービーとジョブページは、URL を知っている人なら誰でも
+        アクセスできます（URL は推測困難なランダム ID です）。
+        自宅等の位置が動画から推測できる点にご注意ください。</span>
+      </label>
+    </div>
+
+    <p><button class="primary" id="go" disabled>ムービー作成を開始</button></p>
     <p class="hint">開始するとジョブ専用リンクが発行されます。ページを閉じても、
-      そのリンクから進捗確認とダウンロードができます（保存期間 7 日）。
-      アップロードされた位置情報はムービー生成のみに使用し、7 日後に削除されます。</p>
+      そのリンクから進捗確認とダウンロードができます（保存期間 7 日）。</p>
   </form>
 
   <div class="card">
@@ -116,9 +137,11 @@
   </footer>
 </div>
 <script>
+const consent = document.getElementById('consent');
+const go = document.getElementById('go');
+consent.addEventListener('change', () => { go.disabled = !consent.checked; });
 document.getElementById('f').addEventListener('submit', () => {
-  const b = document.getElementById('go');
-  b.disabled = true; b.textContent = 'アップロード中…';
+  go.disabled = true; go.textContent = 'アップロード中…';
 });
 setInterval(async () => {
   try {

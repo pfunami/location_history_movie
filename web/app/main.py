@@ -282,7 +282,15 @@ async def submit(request: Request,
                  home_speedup: str = Form("1"), trail_hours: str = Form(""),
                  view_seconds: str = Form(""), pan_kms: str = Form("2500"),
                  min_leg_seconds: str = Form("1.5"),
-                 trip_min_seconds: str = Form("0")):
+                 trip_min_seconds: str = Form("0"),
+                 consent: str = Form("")):
+    if consent != "yes":
+        return templates.TemplateResponse(
+            request, "index.html",
+            ctx(error="位置情報データの取り扱いへの同意が必要です",
+                n_queued=0, wait_min=0,
+                model=estimator.model_info(history_rows())),
+            status_code=400)
     raw = await file.read()
     if len(raw) > MAX_UPLOAD:
         return JSONResponse({"error": "ファイルが大きすぎます (max 300MB)"},
