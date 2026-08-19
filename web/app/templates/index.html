@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Journey Viewer</title>
+<link rel="stylesheet" href="{{ prefix }}/static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site">
+    <h1>Journey Viewer</h1>
+    <p class="subtitle">Google マップのロケーション履歴から、あなたの移動の軌跡をムービーにします</p>
+  </header>
+
+  {% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+  <div class="card">
+    <h3>Queue Status</h3>
+    <div class="status-line">
+      <div class="stat"><div class="num" id="q-n">{{ n_queued }}</div>
+        <div class="label">実行中 + 待機ジョブ</div></div>
+      <div class="stat"><div class="num" id="q-wait">{{ "%.0f"|format(wait_min) }}<span style="font-size:14px"> 分</span></div>
+        <div class="label">今投入した場合の推定待ち時間</div></div>
+      <div class="stat"><div class="num">{{ model.samples }}</div>
+        <div class="label">推定モデルの学習サンプル数</div></div>
+    </div>
+    <p class="hint">推定時間は過去のジョブ実績（フレーム数・位置情報数と実際の所要時間）から
+      オンラインで学習して更新されます。</p>
+  </div>
+
+  <form class="card" action="{{ prefix }}/submit" method="post"
+        enctype="multipart/form-data" id="f">
+    <h3>Create a Movie</h3>
+
+    <div class="row"><div class="field">
+      <label>ロケーション履歴 JSON（スマホの Google マップ → 設定 → タイムラインのエクスポート）</label>
+      <input type="file" name="file" accept=".json,application/json" required>
+    </div></div>
+
+    <div class="row">
+      <div class="field"><label>開始日（省略時: データ先頭）</label>
+        <input type="date" name="start"></div>
+      <div class="field"><label>終了日（省略時: データ末尾・その日を含む）</label>
+        <input type="date" name="end"></div>
+    </div>
+
+    <div class="row">
+      <div class="field"><label>動画の長さ（秒）</label>
+        <input type="number" name="duration" value="75" min="5" max="1800">
+        <div class="hint">早送り倍率は自動計算されます</div></div>
+      <div class="field"><label>または早送り倍率を直接指定（実秒/動画秒）</label>
+        <input type="number" name="speedup" placeholder="例: 3600 = 1時間/秒">
+        <div class="hint">指定すると「動画の長さ」は無視</div></div>
+      <div class="field"><label>画面の向き</label>
+        <select name="orientation">
+          <option value="both">横長 + 縦長（2本）</option>
+          <option value="landscape">横長 1920×1080</option>
+          <option value="portrait">縦長 1080×1920</option>
+        </select></div>
+      <div class="field"><label>スタイル</label>
+        <select name="style">
+          <option value="dark">ダーク</option>
+          <option value="light">ライト</option>
+        </select></div>
+    </div>
+
+    <details class="advanced">
+      <summary>詳細パラメータ</summary>
+      <div class="row">
+        <div class="field"><label>停滞中の追加早送り</label>
+          <input type="number" name="idle_speedup" value="10" min="1" max="200"></div>
+        <div class="field"><label>自宅圏の追加早送り（1=無効）</label>
+          <input type="number" name="home_speedup" value="1" min="1" max="200">
+          <div class="hint">滞在21日以上の場所を自宅として自動検出し、その80km圏を早送り</div></div>
+        <div class="field"><label>トレイル長（実時間, 時間）</label>
+          <input type="number" name="trail_hours" placeholder="自動"></div>
+        <div class="field"><label>fps</label>
+          <input type="number" name="fps" value="30" min="10" max="60"></div>
+      </div>
+      <div class="row">
+        <div class="field"><label>目的地ズーム（動画秒, 空=無効）</label>
+          <input type="number" name="view_seconds" placeholder="例: 8">
+          <div class="hint">旅先到着後に現地の動きへズームイン</div></div>
+        <div class="field"><label>画面移動の上限 (km/動画秒)</label>
+          <input type="number" name="pan_kms" value="2500" min="100" max="100000">
+          <div class="hint">飛行機がテレポートしないようにする</div></div>
+        <div class="field"><label>長距離ホップの最低秒数</label>
+          <input type="number" name="min_leg_seconds" value="1.5" min="0" max="10" step="0.1"></div>
+        <div class="field"><label>遠距離旅行ごとの最低現地秒数（0=無効）</label>
+          <input type="number" name="trip_min_seconds" value="0" min="0" max="30" step="0.5"></div>
+      </div>
+    </details>
+
+    <p><button class="primary" id="go">ムービー作成を開始</button></p>
+    <p class="hint">開始するとジョブ専用リンクが発行されます。ページを閉じても、
+      そのリンクから進捗確認とダウンロードができます（保存期間 7 日）。
+      アップロードされた位置情報はムービー生成のみに使用し、7 日後に削除されます。</p>
+  </form>
+
+  <footer>
+    地図タイル: © OpenStreetMap contributors, © CARTO ／
+    <a href="https://github.com/pfunami/location_history_movie">GitHub</a>
+  </footer>
+</div>
+<script>
+document.getElementById('f').addEventListener('submit', () => {
+  const b = document.getElementById('go');
+  b.disabled = true; b.textContent = 'アップロード中…';
+});
+setInterval(async () => {
+  try {
+    const r = await fetch('{{ prefix }}/api/queue');
+    const j = await r.json();
+    document.getElementById('q-n').textContent = j.n_jobs;
+    document.getElementById('q-wait').innerHTML =
+      Math.round(j.wait_seconds / 60) + '<span style="font-size:14px"> 分</span>';
+  } catch (e) {}
+}, 10000);
+</script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Journey Viewer - Job</title>
+<link rel="stylesheet" href="{{ prefix }}/static/style.css">
+</head>
+<body>
+<div class="wrap">
+  <header class="site">
+    <h1>Journey Viewer</h1>
+    <p class="subtitle"><a href="{{ prefix }}/" style="color:inherit">← 新しいムービーを作る</a></p>
+  </header>
+
+{% if missing %}
+  <div class="card"><h3>Job</h3>
+    <p>ジョブが見つかりません。リンクが正しいか、保存期間（7日）を過ぎていないかご確認ください。</p>
+  </div>
+{% else %}
+  <div class="card">
+    <h3>Job <span id="badge" class="badge queued">…</span></h3>
+    <table class="meta">
+      <tr><td>ジョブID</td><td style="font-family:monospace">{{ job.id }}</td></tr>
+      <tr><td>投入日時</td><td>{{ created_s }}</td></tr>
+      <tr><td>位置情報数</td><td>{{ "{:,}".format(job.n_points) }} 点</td></tr>
+      <tr><td>総移動距離</td><td>{{ "%.0f"|format(job.distance_km) }} km</td></tr>
+      <tr><td>動画の長さ</td><td>{{ "%.0f"|format(job.video_seconds) }} 秒 × {{ job.n_videos }} 本</td></tr>
+      <tr><td>処理予想時間</td><td>{{ "%.1f"|format(job.pred_seconds / 60) }} 分</td></tr>
+    </table>
+
+    <div id="wait-area">
+      <p style="font-size:18px;margin:16px 0 4px">
+        完成まで推定 <b id="eta" style="color:var(--accent)">–</b>
+        <span id="qpos" class="hint"></span></p>
+      <div class="progress-outer"><div class="progress-inner" id="bar"></div></div>
+      <p class="hint">このページは自動更新されます。閉じても同じ URL からいつでも確認できます。</p>
+    </div>
+
+    <div id="done-area" style="display:none">
+      <p style="margin:16px 0 8px">完成しました 🎉</p>
+      <span id="links"></span>
+    </div>
+
+    <div id="error-area" style="display:none">
+      <p class="error" style="margin-top:16px">
+        ジョブが失敗しました。パラメータやファイル形式をご確認のうえ再投入してください。</p>
+    </div>
+  </div>
+{% endif %}
+
+  <footer>地図タイル: © OpenStreetMap contributors, © CARTO</footer>
+</div>
+
+{% if not missing %}
+<script>
+const jobId = "{{ job.id }}";
+const prefix = "{{ prefix }}";
+function fmtEta(s) {
+  if (s == null) return "–";
+  if (s < 90) return Math.max(1, Math.round(s)) + " 秒";
+  return Math.round(s / 60) + " 分";
+}
+async function tick() {
+  let j;
+  try {
+    const r = await fetch(`${prefix}/api/job/${jobId}`);
+    j = await r.json();
+  } catch (e) { return; }
+  const badge = document.getElementById('badge');
+  badge.textContent = {queued: '待機中', running: '生成中',
+                       done: '完成', error: '失敗'}[j.status] || j.status;
+  badge.className = 'badge ' + j.status;
+  if (j.status === 'done') {
+    document.getElementById('wait-area').style.display = 'none';
+    document.getElementById('done-area').style.display = '';
+    const links = document.getElementById('links');
+    links.innerHTML = '';
+    for (const f of j.files) {
+      const a = document.createElement('a');
+      a.className = 'dl';
+      a.href = `${prefix}/download/${jobId}/${f}`;
+      a.textContent = f.includes('landscape') ? '横長 mp4 をダウンロード'
+                                              : '縦長 mp4 をダウンロード';
+      links.appendChild(a);
+    }
+    clearInterval(timer);
+  } else if (j.status === 'error') {
+    document.getElementById('wait-area').style.display = 'none';
+    document.getElementById('error-area').style.display = '';
+    clearInterval(timer);
+  } else {
+    document.getElementById('eta').textContent = 'あと ' + fmtEta(j.eta_seconds);
+    document.getElementById('qpos').textContent =
+      j.queue_position ? `（待ち行列 ${j.queue_position} 番目）` : '';
+    const frac = j.status === 'running'
+      ? (j.progress ?? Math.max(0.02, 1 - j.eta_seconds / j.pred_seconds))
+      : 0;
+    document.getElementById('bar').style.width = (frac * 100).toFixed(1) + '%';
+  }
+}
+tick();
+const timer = setInterval(tick, 5000);
+</script>
+{% endif %}
+</body>
+</html>
