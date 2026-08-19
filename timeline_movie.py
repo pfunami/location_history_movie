@@ -375,6 +375,7 @@ class Renderer:
                                   style["bg"], fetchers=fetchers)
         # precompute mercator coords
         self.mx = [merc(la, lo) for _, la, lo in points]
+        self.lls = [(la, lo) for _, la, lo in points]
         self.times = [p[0] for p in points]
         self.vignette = make_vignette(self.w, self.h)
         base = min(self.w, self.h)
@@ -403,6 +404,17 @@ class Renderer:
         f = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
         (x0, y0), (x1, y1) = self.mx[i - 1], self.mx[i]
         return lerp(x0, x1, f), lerp(y0, y1, f)
+
+    def pos_ll_at(self, t):
+        i = self._index_at(t)
+        if i == 0:
+            return self.lls[0]
+        if i >= len(self.times):
+            return self.lls[-1]
+        t0, t1 = self.times[i - 1], self.times[i]
+        f = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+        (a0, o0), (a1, o1) = self.lls[i - 1], self.lls[i]
+        return lerp(a0, a1, f), lerp(o0, o1, f)
 
     def trail_at(self, t, window):
         i1 = self._index_at(t)
@@ -597,12 +609,48 @@ def compute_camera_path(args, r, bps, total_v, n_frames):
     kc = 1 - math.exp(-dt_v / tau_c)
     kz = 1 - math.exp(-dt_v / tau_z)
     plan = []
+    recent = []  # head history in video time, for --view-seconds framing
     for i in range(n_frames):
         video_t = i * dt_v
         real_t = warp_real_time(bps, video_t)
         head = r.pos_at(real_t)
-        view = r.trail_at(real_t, args.view_hours * 3600)
-        tz = r.target_zoom(view, head)
+        if args.view_seconds:
+            # Frame the current "chapter" of movement. Head positions are
+            # kept per frame for the last N video seconds, each tagged with
+            # its real-world speed. While in fast transit (flights,
+            # expresses) the whole window is framed so the journey stays
+            # visible; once at local speeds the framing cluster walks back
+            # only until the previous transit leg (or a spatial jump), so
+            # the camera zooms into the destination even while the trail
+            # still shows the journey leg.
+            la, lo = r.pos_ll_at(real_t)
+            transit = False
+            if recent:
+                pvt, pla_, plo_ = recent[-1][0], recent[-1][1], recent[-1][2]
+                real_dt_h = (real_t - warp_real_time(bps, pvt)) / 3600.0
+                if real_dt_h > 1e-9:
+                    speed = haversine_km(pla_, plo_, la, lo) / real_dt_h
+                    transit = speed > args.transit_kmh
+            recent.append((video_t, la, lo, head[0], head[1], transit))
+            cutoff = video_t - args.view_seconds
+            while recent and recent[0][0] < cutoff:
+                recent.pop(0)
+            if transit:
+                pts = [(vt, x, y) for vt, _, _, x, y, _ in recent]
+            else:
+                pts = []
+                pla, plo = la, lo
+                for vt, cla, clo, x, y, tr in reversed(recent):
+                    if tr or haversine_km(pla, plo, cla, clo) > args.view_jump_km:
+                        break
+                    pts.append((vt, x, y))
+                    pla, plo = cla, clo
+                if not pts:
+                    pts = [(0, head[0], head[1])]
+            tz = r.target_zoom(pts, head)
+        else:
+            view = r.trail_at(real_t, args.view_hours * 3600)
+            tz = r.target_zoom(view, head)
         if cam is None:
             cam = [head[0], head[1], tz]
         else:
@@ -748,6 +796,19 @@ def main():
                          "zooms in on local wandering at a destination but "
                          "makes the camera busier (default: = trail-hours, "
                          "the calm whole-journey framing)")
+    ap.add_argument("--view-seconds", type=float,
+                    help="camera framing window in VIDEO seconds: zoom fits "
+                         "the head's recent on-screen path, cut at the first "
+                         "big spatial jump, so the camera zooms into a "
+                         "destination even while the trail still shows the "
+                         "journey leg. Overrides --view-hours")
+    ap.add_argument("--view-jump-km", type=float, default=80.0,
+                    help="with --view-seconds: spatial gap that ends the "
+                         "framing cluster (default 80)")
+    ap.add_argument("--transit-kmh", type=float, default=170.0,
+                    help="with --view-seconds: real speed above which the "
+                         "head counts as in transit (flight/express) and "
+                         "the whole window is framed (default 170)")
     ap.add_argument("--home-speedup", type=float, default=1.0,
                     help="extra fast-forward factor while within "
                          "--home-radius-km of home (auto-detected); >1 makes "
