@@ -25,7 +25,12 @@
       50km は高速で流れ、そこから離れた旅行の部分がじっくり描かれます。
       下は離島旅行の 2 日間を 10 秒にしたサンプルです。</p>
     <video src="{{ prefix }}/static/sample.mp4" autoplay controls muted loop playsinline
+           preload="auto" id="sample-video"
            style="width:100%;border-radius:6px;border:1px solid var(--border);display:block"></video>
+    <p class="hint" style="margin-top:10px">
+      💻 位置情報をアップロードしたくない場合は、
+      <a href="https://github.com/pfunami/location_history_movie">GitHub のソースコード</a>
+      を手元の PC で実行すれば、データを一切外部に送らずに同じムービーを生成できます。</p>
   </div>
 
   <form class="card" action="{{ prefix }}/submit" method="post"
@@ -110,7 +115,10 @@
         サーバー上に平文で一時保存された後、<b>7 日後に自動削除</b>されます。
         生成されたムービーとジョブページは、URL を知っている人なら誰でも
         アクセスできます（URL は推測困難なランダム ID です）。
-        自宅等の位置が動画から推測できる点にご注意ください。</span>
+        自宅等の位置が動画から推測できる点にご注意ください。
+        アップロードに抵抗がある場合は
+        <a href="https://github.com/pfunami/location_history_movie">GitHub のコード</a>
+        を手元で実行することもできます（データは PC の外に出ません）。</span>
       </label>
     </div>
 
@@ -137,6 +145,10 @@
   </footer>
 </div>
 <script>
+const sv = document.getElementById('sample-video');
+const tryPlay = () => sv.play().catch(() => {});
+tryPlay();
+document.addEventListener('click', tryPlay, { once: true });
 const consent = document.getElementById('consent');
 const go = document.getElementById('go');
 consent.addEventListener('change', () => { go.disabled = !consent.checked; });
