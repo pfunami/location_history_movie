@@ -15,6 +15,7 @@ import argparse
 import io
 import json
 import math
+import multiprocessing as mp
 import os
 import re
 import subprocess
@@ -221,7 +222,7 @@ def warp_real_time(bps, video_t):
 # ---------------------------------------------------------------- tiles
 
 class TileProvider:
-    def __init__(self, url_tpl, cache_dir, bg):
+    def __init__(self, url_tpl, cache_dir, bg, fetchers=8):
         self.url = url_tpl
         self.dir = cache_dir
         self.bg = bg
@@ -231,7 +232,7 @@ class TileProvider:
         self.lock = threading.Lock()
         self.sess = requests.Session()
         self.sess.headers["User-Agent"] = "timeline-movie/1.0 (personal use)"
-        self.pool = ThreadPoolExecutor(max_workers=8)
+        self.pool = ThreadPoolExecutor(max_workers=fetchers)
         self.fail = Image.new("RGB", (TILE_SIZE, TILE_SIZE), bg)
 
     def _fetch(self, z, x, y):
@@ -256,8 +257,11 @@ class TileProvider:
                     r = self.sess.get(self.url.format(z=z, x=x, y=y), timeout=15)
                     if r.status_code == 200:
                         img = Image.open(io.BytesIO(r.content)).convert("RGB")
-                        with open(fp, "wb") as f:
+                        # atomic write: safe under concurrent processes
+                        tmp = f"{fp}.{os.getpid()}.tmp"
+                        with open(tmp, "wb") as f:
                             f.write(r.content)
+                        os.replace(tmp, fp)
                         break
                     if r.status_code == 404:
                         break
@@ -338,12 +342,13 @@ def make_vignette(w, h):
 # ---------------------------------------------------------------- renderer
 
 class Renderer:
-    def __init__(self, args, points, style, size):
+    def __init__(self, args, points, style, size, fetchers=8):
         self.a = args
         self.pts = points
         self.style = style
         self.w, self.h = size
-        self.tiles = TileProvider(style["tile_url"], args.tile_cache, style["bg"])
+        self.tiles = TileProvider(style["tile_url"], args.tile_cache,
+                                  style["bg"], fetchers=fetchers)
         # precompute mercator coords
         self.mx = [merc(la, lo) for _, la, lo in points]
         self.times = [p[0] for p in points]
@@ -523,37 +528,18 @@ class Renderer:
 
 # ---------------------------------------------------------------- main
 
-def render_video(args, points, size, out_path):
-    style = STYLES[args.style]
-    t_start, t_end = args._t_start, args._t_end
-    speedup = args._speedup
-    bps, total_v = build_timewarp(points, t_start, t_end, speedup,
-                                  args.idle_speedup)
-    n_frames = max(1, int(total_v * args.fps))
-    if args.max_frames:
-        n_frames = min(n_frames, args.max_frames)
-    r = Renderer(args, points, style, size)
+def compute_camera_path(args, r, bps, total_v, n_frames):
+    """Sequential camera smoothing pass (cheap, no rendering).
 
-    print(f"[{os.path.basename(out_path)}] {size[0]}x{size[1]}  "
-          f"video={total_v:.1f}s  frames={n_frames}  speedup={speedup:.0f}x "
-          f"(idle x{args.idle_speedup:g})")
-
-    ff = subprocess.Popen(
-        ["ffmpeg", "-y", "-loglevel", "error",
-         "-f", "rawvideo", "-pix_fmt", "rgb24",
-         "-s", f"{size[0]}x{size[1]}", "-r", str(args.fps), "-i", "-",
-         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-         "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path],
-        stdin=subprocess.PIPE)
-
-    # camera state
+    Returns list of (frame_i, real_t, video_t, (cx, cy, zoom), fade_alpha).
+    """
     fade = args.fade
     cam = None
     tau_c, tau_z = 0.55, 1.6  # seconds (video time)
     dt_v = 1.0 / args.fps
     kc = 1 - math.exp(-dt_v / tau_c)
     kz = 1 - math.exp(-dt_v / tau_z)
-    t_wall = _time.time()
+    plan = []
     for i in range(n_frames):
         video_t = i * dt_v
         real_t = warp_real_time(bps, video_t)
@@ -581,18 +567,81 @@ def render_video(args, points, size, out_path):
         if fade > 0:
             fa = min(1.0, video_t / fade, max(0.0, (total_v - video_t) / fade))
             fa = max(0.0, fa) ** 1.5
-        frame = r.render_frame(real_t, video_t, cam, (t_start, t_end), fa)
-        ff.stdin.write(frame.tobytes())
+        plan.append((i, real_t, video_t, tuple(cam), fa))
+    return plan
+
+
+_W = {}  # per-worker-process state
+
+
+def _worker_init(args, points, style, size, period, fetchers):
+    _W["r"] = Renderer(args, points, style, size, fetchers=fetchers)
+    _W["period"] = period
+
+
+def _worker_render(task):
+    i, real_t, video_t, cam, fa = task
+    frame = _W["r"].render_frame(real_t, video_t, cam, _W["period"], fa)
+    return i, frame.tobytes()
+
+
+def render_video(args, points, size, out_path):
+    style = STYLES[args.style]
+    t_start, t_end = args._t_start, args._t_end
+    speedup = args._speedup
+    bps, total_v = build_timewarp(points, t_start, t_end, speedup,
+                                  args.idle_speedup)
+    n_frames = max(1, int(total_v * args.fps))
+    if args.max_frames:
+        n_frames = min(n_frames, args.max_frames)
+    workers = args.workers or max(1, (os.cpu_count() or 2) - 2)
+
+    print(f"[{os.path.basename(out_path)}] {size[0]}x{size[1]}  "
+          f"video={total_v:.1f}s  frames={n_frames}  speedup={speedup:.0f}x "
+          f"(idle x{args.idle_speedup:g})  workers={workers}")
+
+    r = Renderer(args, points, style, size)
+    plan = compute_camera_path(args, r, bps, total_v, n_frames)
+
+    ff = subprocess.Popen(
+        [args.ffmpeg, "-y", "-loglevel", "error",
+         "-f", "rawvideo", "-pix_fmt", "rgb24",
+         "-s", f"{size[0]}x{size[1]}", "-r", str(args.fps), "-i", "-",
+         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+         "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path],
+        stdin=subprocess.PIPE)
+
+    t_wall = _time.time()
+
+    def progress(i, real_t):
         if i % max(1, n_frames // 20) == 0:
             el = _time.time() - t_wall
             print(f"  frame {i}/{n_frames} ({100 * i // n_frames}%)  "
                   f"{datetime.fromtimestamp(real_t, JST):%Y-%m-%d %H:%M}  "
                   f"[{el:.0f}s elapsed]", flush=True)
+
+    if workers <= 1:
+        for task in plan:
+            i, real_t = task[0], task[1]
+            _W["r"], _W["period"] = r, (t_start, t_end)
+            ff.stdin.write(_worker_render(task)[1])
+            progress(i, real_t)
+    else:
+        # keep total tile-fetch concurrency polite across processes
+        fetchers = max(2, 16 // workers)
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(workers, initializer=_worker_init,
+                      initargs=(args, points, style, size,
+                                (t_start, t_end), fetchers)) as pool:
+            for i, buf in pool.imap(_worker_render, plan, chunksize=2):
+                ff.stdin.write(buf)
+                progress(i, plan[i][1])
     ff.stdin.close()
     ff.wait()
     if ff.returncode != 0:
         raise RuntimeError(f"ffmpeg failed for {out_path}")
-    print(f"  -> wrote {out_path}")
+    el = _time.time() - t_wall
+    print(f"  -> wrote {out_path}  ({el:.0f}s, {n_frames / max(el, 1e-9):.1f} fps)")
 
 
 def parse_user_date(s, end=False):
@@ -639,6 +688,10 @@ def main():
     ap.add_argument("--fade", type=float, default=0.8,
                     help="fade in/out seconds (0 = off)")
     ap.add_argument("--tile-cache", default="tile_cache")
+    ap.add_argument("--workers", type=int, default=0,
+                    help="parallel render processes (0 = auto: n_cpu - 2, "
+                         "1 = serial)")
+    ap.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg binary path")
     ap.add_argument("--max-frames", type=int, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
