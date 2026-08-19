@@ -26,7 +26,8 @@ python3 -m venv .venv
 
 ## データの用意
 
-スマホの Google マップ → 設定 → 「タイムライン」→「タイムラインのエクスポート」で
+スマホの Google マップ → プロフィールアイコン → 設定 →
+「位置情報とプライバシー」→「タイムラインデータをエクスポート」で
 得られる `location-history.json`（`activity` / `visit` / `timelinePath`
 セグメントを含む新形式）をこのディレクトリに置きます。
 
