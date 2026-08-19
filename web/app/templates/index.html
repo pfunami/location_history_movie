@@ -21,6 +21,8 @@
       スマホの Google マップからエクスポートしたロケーション履歴 JSON をアップロードすると、
       ダークな地図の上を発光するトレイルが移動するムービーを生成します。
       期間や早送りの度合いは自由に指定でき、カメラは移動範囲に合わせて自動でズームします。
+      「自宅圏の追加早送り」を有効にすると、長期滞在している拠点（自宅など）の周辺
+      50km は高速で流れ、そこから離れた旅行の部分がじっくり描かれます。
       下は離島旅行の 2 日間を 10 秒にしたサンプルです。</p>
     <video src="{{ prefix }}/static/sample.mp4" controls muted loop playsinline
            style="width:100%;border-radius:6px;border:1px solid var(--border);display:block"></video>
@@ -69,7 +71,7 @@
           <input type="number" name="idle_speedup" value="10" min="1" max="200"></div>
         <div class="field"><label>自宅圏の追加早送り（1=無効）</label>
           <input type="number" name="home_speedup" value="1" min="1" max="200">
-          <div class="hint">滞在21日以上の場所を自宅として自動検出し、その80km圏を早送り</div></div>
+          <div class="hint">滞在21日以上の場所を自宅として自動検出し、その50km圏を早送り</div></div>
         <div class="field"><label>トレイル長（実時間, 時間）</label>
           <input type="number" name="trail_hours" placeholder="自動"></div>
         <div class="field"><label>fps</label>
@@ -84,8 +86,9 @@
           <div class="hint">飛行機がテレポートしないようにする</div></div>
         <div class="field"><label>長距離ホップの最低秒数</label>
           <input type="number" name="min_leg_seconds" value="1.5" min="0" max="10" step="0.1"></div>
-        <div class="field"><label>遠距離旅行ごとの最低現地秒数（0=無効）</label>
-          <input type="number" name="trip_min_seconds" value="0" min="0" max="30" step="0.5"></div>
+        <div class="field"><label>旅行ごとの最低現地秒数（0=無効）</label>
+          <input type="number" name="trip_min_seconds" value="0" min="0" max="30" step="0.5">
+          <div class="hint">自宅100km超の各旅行に保証。長い旅行ほど増額</div></div>
       </div>
     </details>
 

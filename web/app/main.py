@@ -234,16 +234,16 @@ def analyze(points, p):
         sp = p["speedup"]
     else:
         sp = tm.solve_speedup(points, t_start, t_end, p.get("duration", 75),
-                              p.get("idle_speedup", 10), homes, 80.0,
+                              p.get("idle_speedup", 10), homes, 50.0,
                               p.get("home_speedup", 1), p.get("pan_kms", 2500),
                               p.get("min_leg_seconds", 1.5),
-                              p.get("trip_min_seconds", 0), 400.0)
+                              p.get("trip_min_seconds", 0), 100.0)
     _, total_v = tm.build_timewarp(points, t_start, t_end, sp,
-                                   p.get("idle_speedup", 10), homes, 80.0,
+                                   p.get("idle_speedup", 10), homes, 50.0,
                                    p.get("home_speedup", 1),
                                    p.get("pan_kms", 2500),
                                    p.get("min_leg_seconds", 1.5),
-                                   p.get("trip_min_seconds", 0), 400.0)
+                                   p.get("trip_min_seconds", 0), 100.0)
     dist = 0.0
     for i in range(1, len(points)):
         dist += tm.haversine_km(points[i - 1][1], points[i - 1][2],

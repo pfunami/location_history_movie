@@ -168,9 +168,9 @@ def detect_homes(points, min_days=21.0, merge_km=40.0):
 
 
 def build_timewarp(points, t_start, t_end, speedup, idle_speedup,
-                   home=None, home_radius_km=80.0, home_speedup=1.0,
+                   home=None, home_radius_km=50.0, home_speedup=1.0,
                    pan_kms=2500.0, min_leg_s=1.5,
-                   trip_min_s=0.0, trip_far_km=400.0,
+                   trip_min_s=0.0, trip_far_km=100.0,
                    idle_kmh=0.7, idle_min_s=900, leg_km=200.0):
     """Piecewise-linear map real time -> video time.
 
@@ -242,27 +242,43 @@ def build_timewarp(points, t_start, t_end, speedup, idle_speedup,
 
     # guarantee each far trip enough screen time to see local movement:
     # inflate the non-transit part of any contiguous far-away span below
-    # trip_min_s of video
+    # trip_min_s of video. Brief passes through the home radius (< 6 h,
+    # e.g. driving past the boundary) do not split a trip.
     if trip_min_s:
-        i = 0
         n = len(ivals)
-        while i < n:
-            if ivals[i][3]:  # near home
-                i += 1
+        runs = []  # (near, i0, i1_exclusive)
+        for k in range(n):
+            if runs and runs[-1][0] == ivals[k][3]:
+                runs[-1][2] = k + 1
+            else:
+                runs.append([ivals[k][3], k, k + 1])
+        spans = []  # away spans, bridged
+        cur = None
+        for idx, (near, i0, i1) in enumerate(runs):
+            if not near:
+                cur = [i0, i1] if cur is None else [cur[0], i1]
+            else:
+                dur = ivals[i1 - 1][1] - ivals[i0][0]
+                bridge = (cur is not None and dur < 6 * 3600 and
+                          idx + 1 < len(runs))
+                if not bridge and cur is not None:
+                    spans.append(cur)
+                    cur = None
+        if cur is not None:
+            spans.append(cur)
+        for i, j in spans:
+            if max(ivals[k][6] for k in range(i, j)) <= trip_far_km:
                 continue
-            j = i
-            far = False
-            while j < n and not ivals[j][3]:
-                far = far or ivals[j][6] > trip_far_km
-                j += 1
-            if far:
-                local = [k for k in range(i, j) if ivals[k][4] <= 170.0]
-                local_v = sum(vdts[k] for k in local)
-                if 0 < local_v < trip_min_s:
-                    f = trip_min_s / local_v
-                    for k in local:
-                        vdts[k] *= f
-            i = j
+            local = [k for k in range(i, j)
+                     if not ivals[k][3] and ivals[k][4] <= 170.0]
+            local_v = sum(vdts[k] for k in local)
+            # longer trips earn a proportionally larger floor
+            days = (ivals[j - 1][1] - ivals[i][0]) / 86400.0
+            floor_v = max(trip_min_s, trip_min_s * 0.4 * days)
+            if 0 < local_v < floor_v:
+                f = floor_v / local_v
+                for k in local:
+                    vdts[k] *= f
 
     bps = [(ivals[0][0], 0.0)]
     vtot = 0.0
@@ -273,9 +289,9 @@ def build_timewarp(points, t_start, t_end, speedup, idle_speedup,
 
 
 def solve_speedup(points, t_start, t_end, duration, idle_speedup,
-                  home=None, home_radius_km=80.0, home_speedup=1.0,
+                  home=None, home_radius_km=50.0, home_speedup=1.0,
                   pan_kms=2500.0, min_leg_s=1.5,
-                  trip_min_s=0.0, trip_far_km=400.0):
+                  trip_min_s=0.0, trip_far_km=100.0):
     """Find speedup so that total video length == duration (bisection:
     the pan/leg/trip floors make the mapping nonlinear)."""
     lo, hi = 1.0, 1e8
@@ -884,7 +900,7 @@ def main():
                          "--trip-far-km from home) at least this many video "
                          "seconds, inflating its local (non-transit) time "
                          "(0 = off)")
-    ap.add_argument("--trip-far-km", type=float, default=400.0)
+    ap.add_argument("--trip-far-km", type=float, default=100.0)
     ap.add_argument("--transit-kmh", type=float, default=170.0,
                     help="with --view-seconds: real speed above which the "
                          "head counts as in transit (flight/express) and "
@@ -893,7 +909,7 @@ def main():
                     help="extra fast-forward factor while within "
                          "--home-radius-km of home (auto-detected); >1 makes "
                          "the movie focus on trips (default 1 = off)")
-    ap.add_argument("--home-radius-km", type=float, default=80.0)
+    ap.add_argument("--home-radius-km", type=float, default=50.0)
     ap.add_argument("--home", help="home areas as 'lat,lon[;lat,lon...]' "
                                    "(default: auto-detect every area lived "
                                    "in 21+ days when --home-speedup > 1)")
