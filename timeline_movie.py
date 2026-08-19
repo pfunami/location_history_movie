@@ -744,9 +744,10 @@ def main():
                          "(default: auto from period length)")
     ap.add_argument("--view-hours", type=float,
                     help="camera framing window in real hours: zoom fits the "
-                         "last N hours of movement, so local wandering at a "
-                         "destination is shown zoomed in (default: "
-                         "min(6, trail-hours))")
+                         "last N hours of movement. Smaller than trail-hours "
+                         "zooms in on local wandering at a destination but "
+                         "makes the camera busier (default: = trail-hours, "
+                         "the calm whole-journey framing)")
     ap.add_argument("--home-speedup", type=float, default=1.0,
                     help="extra fast-forward factor while within "
                          "--home-radius-km of home (auto-detected); >1 makes "
@@ -787,7 +788,7 @@ def main():
     if args.trail_hours is None:
         args.trail_hours = max(12.0, min(240.0, span_h * 0.03))
     if args.view_hours is None:
-        args.view_hours = min(6.0, args.trail_hours)
+        args.view_hours = args.trail_hours
 
     args._home = None
     if args.home:
