@@ -25,7 +25,7 @@ PREFIX = os.environ.get("URL_PREFIX", "/journey-viewer")
 DATA = os.environ.get("DATA_DIR", "/data")
 JOBS_DIR = os.path.join(DATA, "jobs")
 DB_PATH = os.path.join(DATA, "jobs.db")
-RETENTION_DAYS = 7
+RETENTION_DAYS = 1
 MAX_UPLOAD = 300 * 1024 * 1024
 JST = timezone(timedelta(hours=9))
 

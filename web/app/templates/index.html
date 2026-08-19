@@ -23,7 +23,7 @@
       期間や早送りの度合いは自由に指定でき、カメラは移動範囲に合わせて自動でズームします。
       「自宅圏の追加早送り」を有効にすると、長期滞在している拠点（自宅など）の周辺
       50km は高速で流れ、そこから離れた旅行の部分がじっくり描かれます。
-      下は離島旅行の 2 日間を 10 秒にしたサンプルです。</p>
+      下は架空の旅程データ（京都観光〜新幹線〜宮島の 1.5 日）を 12 秒にしたサンプルです。</p>
     <video src="{{ prefix }}/static/sample.mp4" autoplay controls muted loop playsinline
            preload="auto" id="sample-video"
            style="width:100%;border-radius:6px;border:1px solid var(--border);display:block"></video>
@@ -112,7 +112,7 @@
         <input type="checkbox" name="consent" value="yes" required id="consent">
         <span><b>位置情報データの取り扱いに同意します。</b><br>
         アップロードされたロケーション履歴はムービー生成のみに使用され、
-        サーバー上に平文で一時保存された後、<b>7 日後に自動削除</b>されます。
+        サーバー上に平文で一時保存された後、<b>1 日（24 時間）後に自動削除</b>されます。
         生成されたムービーとジョブページは、URL を知っている人なら誰でも
         アクセスできます（URL は推測困難なランダム ID です）。
         自宅等の位置が動画から推測できる点にご注意ください。
@@ -124,7 +124,7 @@
 
     <p><button class="primary" id="go" disabled>ムービー作成を開始</button></p>
     <p class="hint">開始するとジョブ専用リンクが発行されます。ページを閉じても、
-      そのリンクから進捗確認とダウンロードができます（保存期間 7 日）。</p>
+      そのリンクから進捗確認とダウンロードができます（保存期間 1 日）。</p>
   </form>
 
   <div class="card">
@@ -137,6 +137,19 @@
     </div>
     <p class="hint">推定時間は過去のジョブ実績（フレーム数・位置情報数と実際の所要時間）から
       オンラインで学習して更新されます。</p>
+  </div>
+
+  <div class="card">
+    <h3>Source Code</h3>
+    <p style="font-size:14px;margin:0 0 12px">
+      すべてオープンソースです。手元の PC で実行すれば位置情報を一切
+      アップロードせずにムービーを生成できます。</p>
+    <a href="https://github.com/pfunami/location_history_movie"
+       style="display:block;max-width:520px">
+      <img src="https://opengraph.githubassets.com/1/pfunami/location_history_movie"
+           alt="pfunami/location_history_movie - GitHub"
+           style="width:100%;border:1px solid var(--border);border-radius:6px;display:block">
+    </a>
   </div>
 
   <footer>
