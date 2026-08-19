@@ -7,7 +7,7 @@ services:
     volumes:
       - jv-data:/data
     environment:
-      - URL_PREFIX=/journey-viewer
+      - URL_PREFIX=
 
   nginx:
     image: nginx:alpine
