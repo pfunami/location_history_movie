@@ -143,8 +143,13 @@ def merc(lat, lon):
 
 # ---------------------------------------------------------------- time warp
 
-def detect_home(points):
-    """Return (lat, lon) of the cell where the most time is spent."""
+def detect_homes(points, min_days=21.0, merge_km=40.0):
+    """Return [(lat, lon), ...] of every cell lived in for min_days total.
+
+    People move; each long-term residence (and e.g. a parents' home visited
+    every other weekend) should count as "home" so that only real trips play
+    slowly. Cells within merge_km of an accepted home are merged into it.
+    """
     from collections import defaultdict
     acc = defaultdict(float)
     for i in range(1, len(points)):
@@ -152,22 +157,33 @@ def detect_home(points):
         dt = points[i][0] - t0
         if 0 < dt < 7 * 86400:
             acc[(round(la, 2), round(lo, 2))] += dt
-    return max(acc, key=acc.get)
+    homes = []
+    for cell, dwell in sorted(acc.items(), key=lambda kv: -kv[1]):
+        if dwell < min_days * 86400:
+            break
+        if all(haversine_km(cell[0], cell[1], h[0], h[1]) > merge_km
+               for h in homes):
+            homes.append(cell)
+    return homes or [max(acc, key=acc.get)]
 
 
 def build_timewarp(points, t_start, t_end, speedup, idle_speedup,
                    home=None, home_radius_km=80.0, home_speedup=1.0,
-                   idle_kmh=0.7, idle_min_s=900):
+                   pan_kms=2500.0, min_leg_s=1.5,
+                   trip_min_s=0.0, trip_far_km=400.0,
+                   idle_kmh=0.7, idle_min_s=900, leg_km=200.0):
     """Piecewise-linear map real time -> video time.
 
     Moving intervals play at `speedup` (real s per video s); stationary
     stretches (< idle_kmh for at least idle_min_s) run `idle_speedup` times
     faster.  If `home` is set, intervals within `home_radius_km` of it run
     `home_speedup` times faster still — daily life fast-forwards, trips play
-    slow enough to see.
+    slow enough to see.  Fast vehicles never teleport: playback is slowed so
+    the head crosses at most `pan_kms` km per video second, and any single
+    hop longer than `leg_km` (flights) takes at least `min_leg_s` seconds.
     Returns (breakpoints [(real_t, video_t)], total_video_seconds).
     """
-    # classify each inter-point interval: [t0, t1, moving, near_home]
+    # classify each inter-point interval: [t0, t1, moving, near_home, v, d]
     ivals = []
     prev = None
     for t, la, lo in points:
@@ -182,48 +198,97 @@ def build_timewarp(points, t_start, t_end, speedup, idle_speedup,
                 d = haversine_km(prev[1], prev[2], la, lo)
                 v = d / (dt / 3600.0)
                 moving = v >= idle_kmh and d >= 0.03
-                near = (home is not None and
-                        haversine_km(la, lo, home[0], home[1]) < home_radius_km)
-                ivals.append([prev[0], t, moving, near])
+                dmin = (min(haversine_km(la, lo, h[0], h[1]) for h in home)
+                        if home else 0.0)
+                near = home is not None and dmin < home_radius_km
+                ivals.append([prev[0], t, moving, near, v, d, dmin])
         prev = (t, la, lo)
     if not ivals:
-        ivals = [[t_start, t_end, False, True]]
+        ivals = [[t_start, t_end, False, True, 0.0, 0.0, 0.0]]
     # pad to full range
     if ivals[0][0] > t_start:
-        ivals.insert(0, [t_start, ivals[0][0], False, ivals[0][3]])
+        ivals.insert(0, [t_start, ivals[0][0], False, ivals[0][3], 0.0, 0.0,
+                         ivals[0][6]])
     if ivals[-1][1] < t_end:
-        ivals.append([ivals[-1][1], t_end, False, ivals[-1][3]])
+        ivals.append([ivals[-1][1], t_end, False, ivals[-1][3], 0.0, 0.0,
+                      ivals[-1][6]])
 
-    # merge equal-rate neighbors; too-short stationary stretches stay "moving"
-    merged = []
-    for iv in ivals:
-        if merged and merged[-1][2:] == iv[2:]:
-            merged[-1][1] = iv[1]
-        else:
-            merged.append(list(iv))
-    for iv in merged:
-        if not iv[2] and (iv[1] - iv[0]) < idle_min_s:
-            iv[2] = True
+    # a stationary stretch only counts as idle if long enough in total
+    run_start = None
+    for i, iv in enumerate(ivals + [None]):
+        if iv is not None and not iv[2]:
+            if run_start is None:
+                run_start = i
+        elif run_start is not None:
+            span = ivals[i - 1][1] - ivals[run_start][0]
+            if span < idle_min_s:
+                for j in range(run_start, i):
+                    ivals[j][2] = True
+            run_start = None
 
-    bps = [(merged[0][0], 0.0)]
-    v = 0.0
-    for t0, t1, moving, near in merged:
+    vdts = []
+    for t0, t1, moving, near, v, d, dmin in ivals:
         rate = speedup
         if not moving:
             rate *= idle_speedup
         if near:
             rate *= home_speedup
-        v += (t1 - t0) / rate
-        bps.append((t1, v))
-    return bps, v
+        if pan_kms and v > 0:
+            rate = min(rate, pan_kms * 3600.0 / v)
+        vdt = (t1 - t0) / rate
+        if min_leg_s and d >= leg_km:
+            vdt = max(vdt, min_leg_s)
+        vdts.append(vdt)
+
+    # guarantee each far trip enough screen time to see local movement:
+    # inflate the non-transit part of any contiguous far-away span below
+    # trip_min_s of video
+    if trip_min_s:
+        i = 0
+        n = len(ivals)
+        while i < n:
+            if ivals[i][3]:  # near home
+                i += 1
+                continue
+            j = i
+            far = False
+            while j < n and not ivals[j][3]:
+                far = far or ivals[j][6] > trip_far_km
+                j += 1
+            if far:
+                local = [k for k in range(i, j) if ivals[k][4] <= 170.0]
+                local_v = sum(vdts[k] for k in local)
+                if 0 < local_v < trip_min_s:
+                    f = trip_min_s / local_v
+                    for k in local:
+                        vdts[k] *= f
+            i = j
+
+    bps = [(ivals[0][0], 0.0)]
+    vtot = 0.0
+    for (t0, t1, *_), vdt in zip(ivals, vdts):
+        vtot += vdt
+        bps.append((t1, vtot))
+    return bps, vtot
 
 
 def solve_speedup(points, t_start, t_end, duration, idle_speedup,
-                  home=None, home_radius_km=80.0, home_speedup=1.0):
-    """Find speedup so that total video length == duration."""
-    bps, total = build_timewarp(points, t_start, t_end, 1.0, idle_speedup,
-                                home, home_radius_km, home_speedup)
-    return total / duration
+                  home=None, home_radius_km=80.0, home_speedup=1.0,
+                  pan_kms=2500.0, min_leg_s=1.5,
+                  trip_min_s=0.0, trip_far_km=400.0):
+    """Find speedup so that total video length == duration (bisection:
+    the pan/leg/trip floors make the mapping nonlinear)."""
+    lo, hi = 1.0, 1e8
+    for _ in range(48):
+        mid = math.sqrt(lo * hi)
+        _, tot = build_timewarp(points, t_start, t_end, mid, idle_speedup,
+                                home, home_radius_km, home_speedup,
+                                pan_kms, min_leg_s, trip_min_s, trip_far_km)
+        if tot > duration:
+            lo = mid
+        else:
+            hi = mid
+    return math.sqrt(lo * hi)
 
 
 def warp_real_time(bps, video_t):
@@ -696,7 +761,9 @@ def render_video(args, points, size, out_path):
     speedup = args._speedup
     bps, total_v = build_timewarp(points, t_start, t_end, speedup,
                                   args.idle_speedup, args._home,
-                                  args.home_radius_km, args.home_speedup)
+                                  args.home_radius_km, args.home_speedup,
+                                  args.pan_kms, args.min_leg_seconds,
+                                  args.trip_min_seconds, args.trip_far_km)
     n_frames = max(1, int(total_v * args.fps))
     if args.max_frames:
         n_frames = min(n_frames, args.max_frames)
@@ -805,6 +872,19 @@ def main():
     ap.add_argument("--view-jump-km", type=float, default=80.0,
                     help="with --view-seconds: spatial gap that ends the "
                          "framing cluster (default 80)")
+    ap.add_argument("--pan-kms", type=float, default=2500.0,
+                    help="max on-screen travel in km per video second; fast "
+                         "vehicles are slowed so flights glide instead of "
+                         "teleporting (0 = off, default 2500)")
+    ap.add_argument("--min-leg-seconds", type=float, default=1.5,
+                    help="minimum video seconds for any single hop longer "
+                         "than 200 km, e.g. a flight (0 = off, default 1.5)")
+    ap.add_argument("--trip-min-seconds", type=float, default=0.0,
+                    help="guarantee each far trip (contiguous stay beyond "
+                         "--trip-far-km from home) at least this many video "
+                         "seconds, inflating its local (non-transit) time "
+                         "(0 = off)")
+    ap.add_argument("--trip-far-km", type=float, default=400.0)
     ap.add_argument("--transit-kmh", type=float, default=170.0,
                     help="with --view-seconds: real speed above which the "
                          "head counts as in transit (flight/express) and "
@@ -814,8 +894,9 @@ def main():
                          "--home-radius-km of home (auto-detected); >1 makes "
                          "the movie focus on trips (default 1 = off)")
     ap.add_argument("--home-radius-km", type=float, default=80.0)
-    ap.add_argument("--home", help="home as 'lat,lon' (default: auto-detect "
-                                   "densest cell when --home-speedup > 1)")
+    ap.add_argument("--home", help="home areas as 'lat,lon[;lat,lon...]' "
+                                   "(default: auto-detect every area lived "
+                                   "in 21+ days when --home-speedup > 1)")
     ap.add_argument("--zoom-min", type=float, default=3.0)
     ap.add_argument("--zoom-max", type=float, default=16.0)
     ap.add_argument("--style", choices=list(STYLES), default="dark")
@@ -853,10 +934,12 @@ def main():
 
     args._home = None
     if args.home:
-        args._home = tuple(float(x) for x in args.home.split(","))
+        args._home = [tuple(float(x) for x in part.split(","))
+                      for part in args.home.split(";")]
     elif args.home_speedup > 1.0:
-        args._home = detect_home(points)
-        print(f"home auto-detected: {args._home[0]:.2f},{args._home[1]:.2f} "
+        args._home = detect_homes(points)
+        homes_s = "; ".join(f"{h[0]:.2f},{h[1]:.2f}" for h in args._home)
+        print(f"home areas auto-detected: {homes_s} "
               f"(radius {args.home_radius_km:.0f} km, x{args.home_speedup:g})")
 
     if args.speedup:
@@ -865,7 +948,9 @@ def main():
         dur = args.duration or 75.0
         args._speedup = solve_speedup(points, t_start, t_end, dur,
                                       args.idle_speedup, args._home,
-                                      args.home_radius_km, args.home_speedup)
+                                      args.home_radius_km, args.home_speedup,
+                                      args.pan_kms, args.min_leg_seconds,
+                                      args.trip_min_seconds, args.trip_far_km)
 
     print(f"period: {datetime.fromtimestamp(t_start, JST):%Y-%m-%d %H:%M} .. "
           f"{datetime.fromtimestamp(t_end, JST):%Y-%m-%d %H:%M}  "
