@@ -65,6 +65,31 @@ python3 -m venv .venv
 | `--zoom-min` / `--zoom-max` | カメラズームの範囲 | 3 / 16 |
 | `--fade` | 冒頭・末尾のフェード秒数（0 で無効） | 0.8 |
 | `--tile-cache` | タイルキャッシュのディレクトリ | `tile_cache` |
+| `--view-hours` | カメラの注視ウィンドウ（直近N時間の動きにズームをフィット） | min(6, trail) |
+| `--home-speedup` | 自宅圏内でさらに掛かる早送り係数（>1 で旅行フォーカス） | 1（無効） |
+| `--home-radius-km` | 自宅圏の半径 | 80 |
+| `--home` | 自宅座標 `lat,lon`（省略時は滞在時間から自動検出） | 自動 |
+| `--workers` | フレーム描画の並列プロセス数（0=自動: コア数−2） | 0 |
+| `--encoder` | `auto` / `x264` / `nvenc` / `videotoolbox` | `auto` |
+| `--ffmpeg` | ffmpeg バイナリのパス | `ffmpeg` |
+
+## 旅行フォーカスモード
+
+`--home-speedup 8` のように指定すると、滞在時間が最長の場所を「自宅」と自動検出し、
+その `--home-radius-km` 圏内にいる時間をさらに 8 倍速で流します。
+日常の移動（通勤・都内の移動など）は一瞬で過ぎ、旅行部分が動画の大半になります。
+`--view-hours` はカメラのズームを「直近N時間の動き」にフィットさせるので、
+旅先に着いた後は現地での動き回りにズームインしていきます
+（トレイル自体は `--trail-hours` の長さで残ります）。
+
+## GPU / マルチコア
+
+- フレーム描画はデフォルトでマルチプロセス並列（`--workers 0` = コア数−2）
+- エンコードは `--encoder auto` で GPU エンコーダ（NVIDIA NVENC / Apple
+  VideoToolbox）を自動検出し、なければ libx264 (CPU) にフォールバック
+- NVENC には NVENC 対応の ffmpeg ビルドが必要です（例:
+  [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases) の
+  linux64-gpl。johnvansickle の静的ビルドは NVENC 非対応）
 
 ## 早送りの考え方
 

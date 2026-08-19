@@ -550,6 +550,39 @@ class Renderer:
         return out
 
 
+# ---------------------------------------------------------------- encoding
+
+ENCODER_ARGS = {
+    "x264": ["-c:v", "libx264", "-preset", "medium", "-crf", "18"],
+    "nvenc": ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr",
+              "-cq", "19", "-b:v", "0"],
+    "videotoolbox": ["-c:v", "h264_videotoolbox", "-b:v", "12M"],
+}
+
+
+def _encoder_works(ffmpeg, name):
+    """Try a tiny test encode with the given codec args."""
+    try:
+        r = subprocess.run(
+            [ffmpeg, "-y", "-loglevel", "error",
+             "-f", "lavfi", "-i", "color=black:s=256x256:d=0.1:r=10"]
+            + ENCODER_ARGS[name] + ["-f", "null", "-"],
+            capture_output=True, timeout=30)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def pick_encoder(ffmpeg, choice):
+    """Resolve --encoder: 'auto' probes GPU encoders and falls back to x264."""
+    if choice != "auto":
+        return choice
+    for name in ("nvenc", "videotoolbox"):
+        if _encoder_works(ffmpeg, name):
+            return name
+    return "x264"
+
+
 # ---------------------------------------------------------------- main
 
 def compute_camera_path(args, r, bps, total_v, n_frames):
@@ -620,10 +653,12 @@ def render_video(args, points, size, out_path):
     if args.max_frames:
         n_frames = min(n_frames, args.max_frames)
     workers = args.workers or max(1, (os.cpu_count() or 2) - 2)
+    encoder = pick_encoder(args.ffmpeg, args.encoder)
 
     print(f"[{os.path.basename(out_path)}] {size[0]}x{size[1]}  "
           f"video={total_v:.1f}s  frames={n_frames}  speedup={speedup:.0f}x "
-          f"(idle x{args.idle_speedup:g})  workers={workers}")
+          f"(idle x{args.idle_speedup:g})  workers={workers}  "
+          f"encoder={encoder}")
 
     r = Renderer(args, points, style, size)
     plan = compute_camera_path(args, r, bps, total_v, n_frames)
@@ -631,9 +666,9 @@ def render_video(args, points, size, out_path):
     ff = subprocess.Popen(
         [args.ffmpeg, "-y", "-loglevel", "error",
          "-f", "rawvideo", "-pix_fmt", "rgb24",
-         "-s", f"{size[0]}x{size[1]}", "-r", str(args.fps), "-i", "-",
-         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
-         "-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path],
+         "-s", f"{size[0]}x{size[1]}", "-r", str(args.fps), "-i", "-"]
+        + ENCODER_ARGS[encoder]
+        + ["-pix_fmt", "yuv420p", "-movflags", "+faststart", out_path],
         stdin=subprocess.PIPE)
 
     t_wall = _time.time()
@@ -729,6 +764,10 @@ def main():
                     help="parallel render processes (0 = auto: n_cpu - 2, "
                          "1 = serial)")
     ap.add_argument("--ffmpeg", default="ffmpeg", help="ffmpeg binary path")
+    ap.add_argument("--encoder", choices=["auto", "x264", "nvenc",
+                                          "videotoolbox"], default="auto",
+                    help="video encoder; auto probes GPU encoders "
+                         "(NVENC, VideoToolbox) and falls back to libx264")
     ap.add_argument("--max-frames", type=int, help=argparse.SUPPRESS)
     args = ap.parse_args()
 
