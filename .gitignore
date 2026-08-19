@@ -1,0 +1,11 @@
+# personal data — never commit
+location-history.json
+*.json
+!package.json
+
+# outputs / caches
+*.mp4
+tile_cache/
+.venv/
+__pycache__/
+.DS_Store
