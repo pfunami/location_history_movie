@@ -452,7 +452,9 @@ class Renderer:
         self.pts = points
         self.style = style
         self.w, self.h = size
-        self.tiles = TileProvider(style["tile_url"], args.tile_cache,
+        # per-style cache dir: dark and light tiles must never mix
+        cache_dir = os.path.join(args.tile_cache, args.style)
+        self.tiles = TileProvider(style["tile_url"], cache_dir,
                                   style["bg"], fetchers=fetchers)
         # precompute mercator coords
         self.mx = [merc(la, lo) for _, la, lo in points]
