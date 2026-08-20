@@ -59,9 +59,12 @@ init_db()
 
 
 def history_rows():
+    # includes expired jobs: files are gone but the timing record remains
+    # valuable training data for the estimator
     with db() as c:
         rows = c.execute("SELECT total_frames, n_points, actual_seconds "
-                         "FROM jobs WHERE status='done'").fetchall()
+                         "FROM jobs WHERE status IN ('done','expired') "
+                         "AND actual_seconds IS NOT NULL").fetchall()
     return [(r[0], r[1], r[2]) for r in rows]
 
 
@@ -167,10 +170,12 @@ def run_job(row):
 
 
 def cleanup_old():
+    """Delete uploaded data and rendered files after RETENTION_DAYS, but
+    keep the job row (no coordinates in it) as usage/estimator history."""
     cutoff = time.time() - RETENTION_DAYS * 86400
     with db() as c:
-        old = c.execute("SELECT id FROM jobs WHERE created < ?",
-                        (cutoff,)).fetchall()
+        old = c.execute("SELECT id FROM jobs WHERE created < ? "
+                        "AND status != 'expired'", (cutoff,)).fetchall()
     for r in old:
         jd = os.path.join(JOBS_DIR, r["id"])
         if os.path.isdir(jd):
@@ -178,7 +183,8 @@ def cleanup_old():
                 os.unlink(os.path.join(jd, f))
             os.rmdir(jd)
         with db() as c:
-            c.execute("DELETE FROM jobs WHERE id=?", (r["id"],))
+            c.execute("UPDATE jobs SET status='expired' WHERE id=?",
+                      (r["id"],))
 
 
 threading.Thread(target=worker_loop, daemon=True).start()

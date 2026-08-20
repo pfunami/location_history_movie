@@ -46,6 +46,12 @@
       <p class="error" style="margin-top:16px">
         ジョブが失敗しました。パラメータやファイル形式をご確認のうえ再投入してください。</p>
     </div>
+
+    <div id="expired-area" style="display:none">
+      <p style="margin-top:16px;color:var(--text-muted)">
+        保存期間（1日）を過ぎたため、アップロードされたデータと動画は削除されました。
+        必要な場合はお手数ですが再度作成してください。</p>
+    </div>
   </div>
 {% endif %}
 
@@ -68,10 +74,14 @@ async function tick() {
     j = await r.json();
   } catch (e) { return; }
   const badge = document.getElementById('badge');
-  badge.textContent = {queued: '待機中', running: '生成中',
-                       done: '完成', error: '失敗'}[j.status] || j.status;
-  badge.className = 'badge ' + j.status;
-  if (j.status === 'done') {
+  badge.textContent = {queued: '待機中', running: '生成中', done: '完成',
+                       error: '失敗', expired: '期限切れ'}[j.status] || j.status;
+  badge.className = 'badge ' + (j.status === 'expired' ? 'queued' : j.status);
+  if (j.status === 'expired') {
+    document.getElementById('wait-area').style.display = 'none';
+    document.getElementById('expired-area').style.display = '';
+    clearInterval(timer);
+  } else if (j.status === 'done') {
     document.getElementById('wait-area').style.display = 'none';
     document.getElementById('done-area').style.display = '';
     const links = document.getElementById('links');
